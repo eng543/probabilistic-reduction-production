@@ -1,0 +1,3 @@
+3;cooler.jpg rotate;floss.jpg fade;cooler.jpg shrink;nothing.jpg static;nothing.jpg2;diaper.jpg shrink;screw.jpg expand;nothing.jpg static;nothing.jpg static;nothing.jpg
+3;cooler.jpg rotate;floss.jpg fade;cooler.jpg shrink;nothing.jpg static;nothing.jpg2;diaper.jpg shrink;screw.jpg expand;nothing.jpg static;nothing.jpg static;nothing.jpg
+4;scale.jpg fade;glove.jpg rotate;cherries.jpg expand;diaper.jpg rotate;nothing.jpg3;log.jpg expand;feather.jpg fade;lamp.jpg shrink;nothing.jpg static;nothing.jpg

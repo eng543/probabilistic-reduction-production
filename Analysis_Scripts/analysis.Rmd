@@ -1,0 +1,359 @@
+---
+title: "Noun duration analysis"
+author: "Erin Gustafson"
+output: html_document
+---
+
+## Overview
+This analysis investigates the influence of language background (native or non-native speaker) and word repetition (repeated or non-repeated) on the durations of spoken words. Data were collected from an experiment in which participants saw a series of pictures that underwent one of four actions and were asked to describe the events (e.g., The candle rotates). In repeated trials, one picture underwent two distinct actions (e.g., The candle rotates... the candle shrinks). In non-repeated trials, each picture underwent only one action. The duration of all words produced was measured. For the current analysis, the duration of the target noun is the dependent variable of interest.
+
+Initial pre-processing was performed to remove disfluencies (noted by investigator during word duration measurement) and perform trial matching (target nouns included only if participant produced it in both repeated and non-repeated conditions). 
+
+Following this pre-processing, the data were visualized with a series of barplots and multi-level mixed effects regressions were fit to the data. The results indicated:
+
+1) A main effect of group: non-native speakers produced longer word durations on average than native speakers
+
+2) A main effect of repetition condition: repeated words were shorter on average than non-repeated words
+
+3) A main effect of response time: word durations are longer on average when participants are slower to respond
+
+
+## Pre-processing
+
+Read in data from each group of participants and combine to single dataset.
+``` {r}
+L1_preData <- read.delim("L1_durations.txt", sep = "\t", header = T)
+L2_preData <- read.delim("L2_durations.txt", sep = "\t", header = T)
+preData <- rbind(L1_preData, L2_preData)
+head(preData)
+```
+
+
+Trials for which participants did not provide accurate descriptions were coded with 0 for the dependent variable (nounDur). Include only observations with non-zero entry for nounDur.
+``` {r}
+preData <- preData[preData$nounDur != 0,]
+```
+
+
+Some trials included descriptions of the target noun with an incorrect plural (or singular) form (e.g., peanut in place of desired form peanuts). Remove these trials.
+``` {r}
+wrongNumber <- grep("singular|plural", preData$nounNote)
+preData <- preData[-wrongNumber,]
+```
+
+
+During word duration measurement, the investigator made note of any audible disfluencies (e.g., long pauses, elongated/hesitant productions, repetitions, etc.) at any point of the description. These disfluent trials should be removed.
+``` {r}
+# Nouns
+nounNotes <- unique(preData$nounNote[preData$nounNote != ""])
+disfluency <- grep("elongate|disfluen|wrong|hes|false|pause|filler|action", preData$nounNote)
+
+preData_step1 <- preData[-disfluency,]
+
+# Determiners
+detNotes <- unique(preData_step1$detNote[preData_step1$detNote != ""])
+detDisfluency <- grep("elongate|disfluen|hes|false|pause", preData_step1$detNote)
+
+preData_step2a <- preData_step1[-detDisfluency,]
+
+detVowelNotes <- unique(preData_step2a$detVowelNote[preData_step2a$detVowelNote != ""])
+detVowelDisfluency <- grep("elongate|disfluen|false", preData_step2a$detVowelNote)
+
+preData_step2b <- preData_step2a[-detVowelDisfluency,]
+
+# Verbs
+verbNotes <- unique(preData_step2b$verbNote[preData_step2b$verbNote != ""])
+verbDisfluency <- grep("disfluent|hesitant|elongated", preData_step2b$verbNote)
+
+preData_step2 <- preData_step2b[-verbDisfluency,]
+```
+
+
+Following existing studies (which the current study aims to replicate), trials with a lag of more than 250 ms between the target noun and the verb are removed. These trials are considered disfluent.
+``` {r}
+preData_step2$keep <- ifelse(preData_step2$verbLag <= 0.25,
+                            1,
+                            0)
+
+preData_250 <- preData_step2[preData_step2$keep == 1,]
+head(preData_250)
+```
+
+
+Next, observations more than 3 standard deviations from the mean should be removed.
+``` {r}
+# Trimming function: Given a dataframe data and a cut off standard deviation sdCutoff, return the dataframe with the outlier observations removed
+
+trim.fnc <- function(data, sdCutoff) {
+
+# Return data frame
+keep <- data[1,]
+
+for (i in 1:nrow(data)) {
+
+	# define relevant data. **Make sure columns are correct**
+	relDat <- data$nounDur[data$subject == data[i, "subject"]
+	                               & data$group == data[i, "group"] 
+	                               & data$condition == data[i, "condition"]]
+
+	# if observations falls within standard deviation of mean of relevant observations, retain it
+	if (abs(data[i, "nounDur"] - mean(relDat)) < sdCutoff*sd(relDat)) {
+		keep <- rbind(keep, data[i,])
+	}
+}
+
+# return data frame
+return(keep)
+}
+
+dataSDTrim <- trim.fnc(preData_250, 3)
+```
+
+
+Finally, trials should be matched for repetition condition. That is, we will not analyze the effect of repetition on the duration of a word unless a participant produces that word in both the repeated and non-repeated conditions.
+``` {r}
+matchedData <- data.frame()
+
+for (subj in unique(dataSDTrim$subject)) {
+    subjData <- dataSDTrim[dataSDTrim$subject == subj,]
+    for (w in unique(subjData$word)) {
+        targetWord <- subjData[subjData$word == w,]
+        if (length(targetWord$word) != 2) {
+            subjData <- subjData[subjData$word != w,] 
+        }
+    }
+    matchedData <- rbind(subjData, matchedData)
+}
+
+head(matchedData)
+```
+
+
+## Data visualization
+Read in plyr and ggplot2 packages for data visualization.
+``` {r}
+library(plyr)
+library(ggplot2)
+```
+
+
+Word duration data tend to be highly skewed. Prior to analysis, it is prudent to determine if the dependent variable should be log transformed. These word durations are slightly skewed to the right. Log transformation of this variable leads to a more normal distribution. Noun duration should be log transformed for regression analyses.
+``` {r}
+ggplot(matchedData, aes(x = nounDur)) + geom_histogram()
+ggplot(matchedData, aes(x = log(nounDur))) + geom_histogram()
+
+matchedData$log_nounDur <- log(matchedData$nounDur)
+```
+
+
+We begin exploring the data by calculating by-participant means for word durations across conditions. We can see that non-native noun durations are longer than native noun durations, and that repeated words are shorter than non-repeated words. Numerically, there does not seem to be an interaction between group and repetition condition.
+``` {r}
+# relevel 'condition' variable
+matchedData$condition <- factor(matchedData$condition, 
+                               levels = c("Repeated", "Non-repeated"),
+                               labels = c("Repeated", "Non-repeated"))
+bySubj <- ddply(matchedData,. 
+               (subject, group, condition), 
+               summarize,
+               "subjMean" = mean(nounDur))
+
+grand <- ddply(bySubj,.
+              (group, condition),
+              summarize,
+              "mean" = mean(subjMean) * 1000,
+              "se" = sd(subjMean)/(sqrt(length(subjMean))) * 1000)
+
+ggplot(grand, aes(x = group, y = mean, fill = condition)) +
+    geom_bar(stat = "identity", position = position_dodge(0.9)) + 
+    geom_errorbar(aes(ymin = mean - se, ymax = mean + se), width = 0.2, position = 
+                      position_dodge(0.9)) + 
+    ylab("Mean duration of noun (ms)") + xlab("Group")
+```
+
+
+Given that target words appear twice during the experiment, we might want to know whether this experiment-level repetition influences word durations. Furthermore, this repetition could influence the magnitude of the repetition reduction effect. Therefore, we plot the mean duration of nouns across conditions and blocks for both groups. 
+
+The plot suggests that the effects are relatively stable across blocks. However, there is a small numerical increase in word durations in the second vs. first block for native speakers, but a decrease for non-native speakers. The difference in duration between repeated and non-repeated words also appears numerically larger for non-native vs. native speakers in the second half of the experiment. This suggests that block should be included in our regression as a control factor. There may be a three-way interaction between group, condition, and block.
+``` {r}
+# refactor 'block' variable to combine 1A/1B to "Block 1" and 2A/2B to "Block 2"
+matchedData$block.grouped <- ifelse(grepl("(1A|1B)", matchedData$block), 
+                                 "Block1",
+                                 "Block2")
+
+bySubj <- ddply(matchedData,. (subject, condition, group, block.grouped),
+               summarize,
+               "subjMean" = mean(nounDur))
+
+grand <- ddply(bySubj,. (condition, group, block.grouped),
+              summarize,
+              "mean" = mean(subjMean),
+              "se" = sd(subjMean)/(sqrt(length(subjMean))))
+
+
+ggplot(grand, aes(x = block.grouped, y = mean*1000, linetype = condition)) +
+    geom_point() + 
+    geom_line(aes(group = condition)) + 
+    geom_errorbar(aes(ymin = mean*1000 - se*1000, ymax = mean*1000 + se*1000), width = 0.25, linetype = "solid") +
+    facet_grid(.~group) +
+    ylab("Mean duration of noun (ms)") + xlab("")
+```
+
+
+We might also wonder if the amount of time it takes participants to initiate production influences the duration of the words they produce. That is, are fast responders more likely to produce long words, and are slow responders more likely to produce short words? To examine this relationship, we will plot the correlation between response time (RT) and noun durations. Like word durations, RTs also tend to be positively skewed. A histogram confirms this, so RTs should be log transformed for regressions.
+``` {r}
+ggplot(matchedData, aes(x = RT)) + geom_histogram()
+matchedData$log_RT <- log(matchedData$RT)
+```
+
+
+A simple linear regression reveals that there is a signficant positive linear relationship between noun durations and RTs. It may, therefore, be useful to include RT in our regression model to capture added variance.
+```{r}
+matchedData$log_RT.centered <- matchedData$log_RT - mean(matchedData$log_RT)
+correl <- lm(log_nounDur ~ log_RT.centered, data = matchedData)
+
+ggplot(matchedData, aes(x = log_nounDur, y = log_RT.centered)) + 
+    geom_point() +
+    stat_smooth(method = "lm") +
+    labs(title = paste("Adj R2 = ", signif(summary(correl)$adj.r.squared, 5),
+                       " Intercept = ", signif(correl$coef[[1]], 5),
+                       " Slope = ", signif(correl$coef[[2]], 5),
+                       " p = ", signif(summary(correl)$coef[2,4], 5)))
+```
+
+
+## Regression analyses
+
+Now that we have a sense of the data, we can begin building regression models. 
+``` {r}
+library(lme4)
+```
+
+
+First, we will contrast code the fixed effects that will be included in the model: group, repetition condition, and block.
+``` {r}
+matchedData$group.c <- ifelse(matchedData$group == "Native",
+                             0.5,
+                             -0.5)
+
+matchedData$condition.c <- ifelse(matchedData$condition == "Repeated",
+                                 0.5,
+                                 -0.5)
+
+matchedData$block.c <- ifelse(matchedData$block.grouped == "Block1",
+                             0.5,
+                             -0.5)
+```
+
+
+The dependent variable for our model will be log transformed noun durations, as we determined the duration data were skewed. The fixed effects condition, group, block, and RT will be included, as well as their interactions. We will include random effects for both items (words) and participants, with random slopes for condition, block, group, and RT by word, and random slopes for condition, block, and RT by subject.
+``` {r}
+noun.lmer <- lmer(log_nounDur ~ condition.c*group.c*block.c*log_RT.centered + 
+                     (1 + condition.c+block.c+group.c+log_RT.centered
+                      |word) + 
+                     (1 + condition.c+block.c+log_RT.centered|subject), 
+                 data = matchedData, 
+                 REML = F, 
+                 control = lmerControl(optimizer = "bobyqa"))
+summary(noun.lmer)
+```
+
+
+Examining the distribution of residuals reveals some skew at the tails. 
+``` {r}
+qqnorm(resid(noun.lmer))
+qqline(resid(noun.lmer))
+```
+
+
+We can address this issue by excluding observations with residuals exceeding 2.5. After this exclusion, we should then re-match the observations by condition within participant.
+``` {r}
+dataTrim <- matchedData[abs(scale(resid(noun.lmer))) < 2.5,]
+
+matchedData_trim <- data.frame()
+
+for (subj in unique(dataTrim$subject)) {
+    subjData = dataTrim[dataTrim$subject == subj,]
+    for (w in unique(subjData$word)) {
+        targetWord = subjData[subjData$word == w,]
+        if (length(targetWord$word) != 2) {
+            subjData <- subjData[subjData$word != w,] 
+        }
+    }
+    matchedData_trim <- rbind(subjData, matchedData_trim)
+}
+```
+
+
+We can now re-run the same model on the trimmed dataset.
+``` {r}
+nounTrim.lmer <- lmer(log_nounDur ~ condition.c*group.c*block.c*log_RT.centered + 
+                     (1 + condition.c+block.c+group.c+log_RT.centered
+                      |word) + 
+                     (1 + condition.c+block.c+log_RT.centered|subject), 
+                 data = matchedData_trim, 
+                 REML = F, 
+                 control = lmerControl(optimizer = "bobyqa"))
+```
+
+
+The new model fails to converge. We should refit the original model, simplifying the random effects structure in hopes that the model of the trimmed data will converge.
+``` {r}
+noun_simp.lmer <- lmer(log_nounDur ~ condition.c*group.c*block.c*log_RT.centered +
+                     (1 + condition.c+block.c+group.c+log_RT.centered
+                      ||word) +
+                     (1 + condition.c+block.c+log_RT.centered||subject), 
+                 data = matchedData, 
+                 REML = F, 
+                 control = lmerControl(optimizer = "bobyqa"))
+summary(noun_simp.lmer)
+qqnorm(resid(noun_simp.lmer))
+qqline(resid(noun_simp.lmer))
+```
+
+
+Run simplified model on trimmed data.
+``` {r}
+dataTrim_simp <- matchedData[abs(scale(resid(noun.lmer))) < 2.5,]
+
+matchedData_trimSimp <- data.frame()
+
+for (subj in unique(dataTrim_simp$subject)) {
+    subjData <- dataTrim_simp[dataTrim_simp$subject == subj,]
+    for (w in unique(subjData$word)) {
+        targetWord <- subjData[subjData$word == w,]
+        if (length(targetWord$word) != 2) {
+            subjData <- subjData[subjData$word != w,] 
+        }
+    }
+    matchedData_trimSimp <- rbind(subjData, matchedData_trimSimp)
+}
+
+nounTrim_simp.lmer <- lmer(log_nounDur ~
+                              condition.c*group.c*block.c*log_RT.centered +
+                              (1 + condition.c+block.c+group.c+log_RT.centered
+                      ||word) +
+                          (1 + condition.c+block.c+log_RT.centered||subject), 
+                 data = matchedData_trimSimp, 
+                 REML = F, 
+                 control = lmerControl(optimizer = "bobyqa"))
+summary(nounTrim_simp.lmer)
+```
+
+
+We now re-examine the distrubiton of the residuals. There is some improvement (not perfect due to the fact that we excluded more observations than model-based trimming required in order to re-match the dataset).
+``` {r}
+qqnorm(resid(nounTrim_simp.lmer))
+qqline(resid(nounTrim_simp.lmer))
+```
+
+
+The trimmed model accounts for 3.6% more variance in the data.
+``` {r}
+cor(fitted(nounTrim_simp.lmer), matchedData_trimSimp$log_nounDur)^2 - cor(fitted(noun_simp.lmer), matchedData$log_nounDur)^2
+```
+
+
+Now that we are satisfied with the structure of the model, we can begin signficance testing. We do so by using likelihood ratio tests to compare models with or without the predictors of interest. We can see that there are significant main effects of group, repetition condition, and RT. The three-way interaction between condition, group, and block is marginally significant. No other main effects are significant, nor are any interactions.
+``` {r}
+drop1(nounTrim_simp.lmer, ~., test = "Chi")
+```
