@@ -48,7 +48,10 @@ This repository contains:
 
 
 ## Design_Scripts
-This directory contains three scripts used to create pseudo-randomized stimulus lists (run in order):
+This directory contains a program, which runs three scripts used to create pseudo-randomized stimulus lists (run in order):
+Program: makeListProgram.py
+
+Runs following scripts:
 * makeStimulusList1.py
 * modifyReferenceSheets.py
 * makeOtherStimulusLists.py
